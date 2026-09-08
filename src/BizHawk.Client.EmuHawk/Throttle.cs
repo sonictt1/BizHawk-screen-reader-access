@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 using BizHawk.Client.Common;
@@ -10,6 +11,28 @@ namespace BizHawk.Client.EmuHawk
 {
 	public class Throttle
 	{
+		/// <summary>
+		/// Sleeps for <paramref name="ms"/> milliseconds while dispatching incoming COM calls on Windows
+		/// (so that UIA/MSAA screen-reader queries are answered during the wait).
+		/// On non-Windows platforms falls back to <see cref="Thread.Sleep(int)"/>.
+		/// </summary>
+		private static void ResponsiveSleep(int ms)
+		{
+			if (OSTailoredCode.IsUnixHost)
+			{
+				Thread.Sleep(ms);
+				return;
+			}
+
+			// CoWaitForMultipleHandles with COWAIT_DISPATCH_CALLS dispatches incoming COM/UIA calls
+			// while waiting, keeping the STA UI thread responsive to screen readers.
+			const uint COWAIT_DISPATCH_CALLS = 0x00000008;
+			CoWaitForMultipleHandles(COWAIT_DISPATCH_CALLS, (uint)ms, 0, null, out _);
+		}
+
+		[DllImport("ole32.dll", ExactSpelling = true)]
+		private static extern int CoWaitForMultipleHandles(uint dwFlags, uint dwTimeout, uint cHandles, IntPtr[] pHandles, out uint lpdwindex);
+
 		private int lastSkipRate;
 		private int framesToSkip;
 		public bool skipNextFrame;
@@ -35,7 +58,7 @@ namespace BizHawk.Client.EmuHawk
 				framesToSkip = 0;
 
 				//keep from burning CPU
-				Thread.Sleep(15);
+				ResponsiveSleep(15);
 				return;
 			}
 
@@ -326,7 +349,7 @@ namespace BizHawk.Client.EmuHawk
 							break;
 					}
 
-					Thread.Sleep(Math.Max(sleepTime, 1));
+					ResponsiveSleep(Math.Max(sleepTime, 1));
 				}
 				else if (sleepTime > 0) // spin for <1 millisecond waits
 				{
